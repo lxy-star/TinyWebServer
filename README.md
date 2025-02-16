@@ -234,8 +234,15 @@ webbench -c 1000 -t 30 http://ip:port/
 	-c 表示客户端数
 	-t 表示时间
 ```
+root@1739711330295:/home/TinyWebServer/TinyWebServer# ./webbench-1.5/webbench -c 10000 -t 5 http://116.196.71.150:1316/
+Webbench - Simple Web Benchmark 1.5
+Copyright (c) Radim Kolar 1997-2004, GPL Open Source Software.
 
-![image](https://github.com/user-attachments/assets/cbf5d766-7f03-447e-958b-353cdc308ae2)
+Benchmarking: GET http://116.196.71.150:1316/
+10000 clients, running 5 sec.
+
+Speed=13212 pages/min, 814234 bytes/sec.
+Requests: 1101 susceed, 0 failed.
 
 
 ## Thanks
