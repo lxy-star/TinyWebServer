@@ -235,7 +235,7 @@ webbench -c 1000 -t 30 http://ip:port/
 	-t 表示时间
 ```
 
-![](./imgs/pressure.png)
+![image](https://github.com/user-attachments/assets/cbf5d766-7f03-447e-958b-353cdc308ae2)
 
 
 ## Thanks
