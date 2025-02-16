@@ -1,0 +1,3 @@
+/home/lxy/VSCodeWorkSpace/TinyWebService/build/CMakeFiles/TinyWebService.dir
+/home/lxy/VSCodeWorkSpace/TinyWebService/build/CMakeFiles/edit_cache.dir
+/home/lxy/VSCodeWorkSpace/TinyWebService/build/CMakeFiles/rebuild_cache.dir
