@@ -14,8 +14,14 @@
 * Ubuntu 22
 * Modern C++
 * MySql
+sudo apt install mysql-server
+sudo apt install libmysqlclient-dev
 * Vscode
 * git
+* cmake
+sudo apt install cmake
+* pkg-config
+sudo apt install pkg-config
 
 ## 目录树
 ```
