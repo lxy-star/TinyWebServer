@@ -31,6 +31,13 @@ private:
     std::queue<MYSQL *> connQue_;
     std::mutex mtx_;
     sem_t semId_;
+
+    // 【新增】用于在 FreeConn 时重建连接
+    char *host_;
+    char *user_;
+    char *pwd_;
+    char *dbName_;
+    int port_;
 };
 
 #endif // SQLCONNPOLL_H

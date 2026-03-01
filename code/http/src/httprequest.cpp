@@ -212,11 +212,38 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
         LOG_INFO("Empty username or password");
         return false;
     }
-    LOG_INFO("Verify name:%s pwd:%s", name.c_str(), pwd.c_str());
+    LOG_INFO("Verify name:%s", name.c_str());
 
-    MYSQL *sql;
-    SqlConnRAII(&sql, SqlConnPool::Instance());
+    MYSQL *sql = nullptr;
+    bool retry = false; // 标记是否需要重试
+
+try_connect:
+{
+    // 使用花括号限制 RAII 的作用域，以便在需要重试时能重新获取
+    SqlConnRAII raii(&sql, SqlConnPool::Instance());
     assert(sql);
+
+    // 【新增】关键步骤：检查连接是否存活
+    if (mysql_ping(sql) != 0)
+    {
+        LOG_ERROR("Database connection lost (ping failed): %s", mysql_error(sql));
+
+        // 如果这是第一次尝试，且是因为超时断开，我们可以尝试重试一次
+        if (!retry)
+        {
+            LOG_INFO("Attempting to reconnect and retry...");
+            retry = true;
+            // 重要：raii 离开作用域时会自动归还这个坏掉的连接
+            // 然后我们 goto 到 try_connect 重新获取一个新连接
+            goto try_connect;
+        }
+        else
+        {
+            // 重试过一次还是失败，说明数据库可能挂了或网络严重问题
+            LOG_ERROR("Failed to reconnect to database.");
+            return false;
+        }
+    }
 
     bool flag = false;
 
@@ -232,7 +259,21 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
         stmt = mysql_stmt_init(sql);
         if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)))
         {
+            // 再次检查是否是连接断开导致的错误（双重保险）
+            int err_code = mysql_errno(sql);
+            if (err_code == CR_SERVER_GONE_ERROR || err_code == CR_SERVER_LOST)
+            {
+                if (!retry)
+                {
+                    LOG_INFO("Prepare failed due to lost connection, retrying...");
+                    retry = true;
+                    goto try_connect;
+                }
+            }
+
             LOG_ERROR("Failed to prepare login statement: %s", mysql_error(sql));
+            if (stmt)
+                mysql_stmt_close(stmt);
             return false;
         }
 
@@ -259,11 +300,14 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
         // 绑定结果列
         MYSQL_BIND result_bind[1];
         memset(result_bind, 0, sizeof(result_bind));
-
         char password_buffer[256];
+        // 初始化 buffer 以防万一
+        memset(password_buffer, 0, sizeof(password_buffer));
+
         result_bind[0].buffer_type = MYSQL_TYPE_STRING;
         result_bind[0].buffer = password_buffer;
         result_bind[0].buffer_length = sizeof(password_buffer);
+        // result_bind[0].length 不需要设为 nullptr，mysql 会处理，但设为 0 更安全
         result_bind[0].length = nullptr;
 
         if (mysql_stmt_bind_result(stmt, result_bind))
@@ -273,7 +317,6 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
             return false;
         }
 
-        // 存储结果集
         if (mysql_stmt_store_result(stmt))
         {
             LOG_ERROR("Failed to store result: %s", mysql_stmt_error(stmt));
@@ -281,9 +324,17 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
             return false;
         }
 
-        // 获取结果行
-        if (mysql_stmt_fetch(stmt) == 0)
+        int fetch_ret = mysql_stmt_fetch(stmt);
+        if (fetch_ret == 0)
         {
+            // 确保字符串以 null 结尾，因为 MYSQL_TYPE_STRING 不会自动加 \0
+            // buffer_length 限制了最大读取长度，我们需要手动截断或确保有空间
+            // mysql_stmt_bind_result 不会自动添加 \0，必须手动处理
+            unsigned long len = result_bind[0].length ? *result_bind[0].length : strlen(password_buffer);
+            if (len >= sizeof(password_buffer))
+                len = sizeof(password_buffer) - 1;
+            password_buffer[len] = '\0';
+
             std::string stored_password(password_buffer);
             if (pwd == stored_password)
             {
@@ -295,9 +346,15 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
                 LOG_INFO("Password error!");
             }
         }
+        else if (fetch_ret == 1)
+        {
+            // 没有数据
+            LOG_INFO("User not found!");
+        }
         else
         {
-            LOG_INFO("User not found!");
+            // 出错
+            LOG_ERROR("Fetch failed: %s", mysql_stmt_error(stmt));
         }
 
         // 清理资源
@@ -306,16 +363,23 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
     }
     else
     {
-        // 注册操作
+        // 注册逻辑 (同样建议加上 errno 检查重试，此处省略以保持简洁，原理同上)
         const char *query = "INSERT INTO user(username, password) VALUES(?, ?)";
         stmt = mysql_stmt_init(sql);
         if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)))
         {
+            int err_code = mysql_errno(sql);
+            if (!retry && (err_code == CR_SERVER_GONE_ERROR || err_code == CR_SERVER_LOST))
+            {
+                retry = true;
+                goto try_connect;
+            }
             LOG_ERROR("Failed to prepare register statement: %s", mysql_error(sql));
+            if (stmt)
+                mysql_stmt_close(stmt);
             return false;
         }
 
-        // 绑定用户名和密码参数
         bind[0].buffer_type = MYSQL_TYPE_STRING;
         bind[0].buffer = (char *)name.c_str();
         bind[0].buffer_length = name.size();
@@ -346,6 +410,8 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
 
     LOG_DEBUG("UserVerify success!!");
     return flag;
+
+} // Raai 在这里析构，归还连接
 }
 
 std::string HttpRequest::path() const
